@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Exit on any error
+set -e
+
+# Variables
+TOR_PROXY="socks5 127.0.0.1 9050"  # Tor proxy configuration
+INTERFACE_NAME=eth0  # Replace this with the correct network interface if needed
+
+# Update and install required packages
+sudo apt-get update
+sudo apt-get install -y tor proxychains
+
+# Configure Tor to start on boot
+sudo systemctl enable tor
+sudo systemctl start tor
+
+# Configure Proxychains
+sudo bash -c 'cat <<EOF > /etc/proxychains.conf
+strict_chain
+proxy_dns
+tcp_read_time_out 15000
+tcp_connect_time_out 8000
+
+[ProxyList]
+# add proxy here ...
+# meanwile
+# defaults set to "tor"
+$TOR_PROXY
+EOF'
+
+# Configure system to use proxychains for all traffic
+sudo bash -c 'cat <<EOF > /etc/environment
+http_proxy="http://127.0.0.1:9050"
+https_proxy="http://127.0.0.1:9050"
+ftp_proxy="http://127.0.0.1:9050"
+no_proxy="localhost,127.0.0.1"
+EOF'
+
+# Apply environment settings
+source /etc/environment
+
+# Redirect all traffic through proxychains using iptables
+sudo iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner $(id -u) -j REDIRECT --to-ports 9050
+
+# Save iptables rules
+sudo sh -c "iptables-save > /etc/iptables.up.rules"
+
+# Apply iptables rules at startup
+sudo bash -c 'cat <<EOF > /etc/network/if-pre-up.d/iptables
+#!/bin/sh
+iptables-restore < /etc/iptables.up.rules
+EOF'
+
+# Make the script executable
+sudo chmod +x /etc/network/if-pre-up.d/iptables
+
+# Apply the iptables rules now
+sudo iptables-restore < /etc/iptables.up.rules
+
+echo "Client VM has been configured to route all traffic through Tor and proxychains."
